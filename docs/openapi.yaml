@@ -1,0 +1,340 @@
+openapi: 3.1.1
+info:
+  title: Astronacci Airline Voucher API
+  version: 1.0.0
+  summary: Check and generate airline crew seat vouchers.
+  license:
+    name: MIT
+    identifier: MIT
+  description: |
+    Public JSON API for checking whether seat vouchers have already been assigned
+    to a flight and for generating three seat assignments for a crew member.
+
+    A flight is uniquely identified by the combination of `flightNumber` and
+    `date`. Requests do not require authentication.
+servers:
+  - url: http://127.0.0.1:8000/api
+    description: Local development server
+tags:
+  - name: Vouchers
+    description: Check and generate flight voucher assignments.
+security: []
+paths:
+  /check:
+    post:
+      tags:
+        - Vouchers
+      summary: Check voucher availability
+      description: |
+        Checks whether vouchers have already been generated for a flight on a
+        specific date. Leading and trailing whitespace is removed from both
+        fields, and the flight number is converted to uppercase before lookup.
+      operationId: checkVoucherAvailability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckVoucherRequest'
+            examples:
+              standard:
+                summary: Check a flight
+                value:
+                  flightNumber: GA102
+                  date: '2026-08-12'
+      responses:
+        '200':
+          description: Voucher availability was checked successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoucherAvailabilityResponse'
+              examples:
+                available:
+                  summary: No vouchers have been generated
+                  value:
+                    success: true
+                    message: Voucher availability checked successfully.
+                    code: 200
+                    data:
+                      exists: false
+                alreadyGenerated:
+                  summary: Vouchers already exist
+                  value:
+                    success: true
+                    message: Voucher availability checked successfully.
+                    code: 200
+                    data:
+                      exists: true
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /generate:
+    post:
+      tags:
+        - Vouchers
+      summary: Generate vouchers
+      description: |
+        Generates and persists three unique seat assignments for the requested
+        flight. Only one voucher assignment may exist for a given flight number
+        and date.
+
+        Leading and trailing whitespace is removed from all string fields, and
+        the flight number is converted to uppercase before validation and
+        persistence. Aircraft values are case-sensitive after trimming.
+      operationId: generateVouchers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateVoucherRequest'
+            examples:
+              airbus320:
+                summary: Generate seats for an Airbus 320 flight
+                value:
+                  name: Sarah
+                  id: '00123'
+                  flightNumber: GA102
+                  date: '2026-08-12'
+                  aircraft: Airbus 320
+      responses:
+        '201':
+          description: Vouchers were generated and persisted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeneratedVoucherResponse'
+              example:
+                success: true
+                message: Vouchers generated successfully.
+                code: 201
+                data:
+                  seats:
+                    - 3B
+                    - 7C
+                    - 14D
+        '409':
+          description: Vouchers have already been generated for this flight and date.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictResponse'
+              example:
+                success: false
+                message: Vouchers have already been generated for this flight and date.
+                code: 409
+                data: []
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+components:
+  schemas:
+    FlightNumber:
+      type: string
+      minLength: 1
+      maxLength: 20
+      pattern: '^[A-Z0-9-]+$'
+      description: |
+        Flight number containing only letters, numbers, and hyphens. The server
+        trims this value and converts it to uppercase before validation.
+      examples:
+        - GA102
+
+    FlightDate:
+      type: string
+      format: date
+      description: Flight date in `YYYY-MM-DD` format.
+      examples:
+        - '2026-08-12'
+
+    AircraftType:
+      type: string
+      description: Supported aircraft type. The value is case-sensitive.
+      enum:
+        - ATR
+        - Airbus 320
+        - Boeing 737 Max
+
+    CheckVoucherRequest:
+      type: object
+      required:
+        - flightNumber
+        - date
+      properties:
+        flightNumber:
+          $ref: '#/components/schemas/FlightNumber'
+        date:
+          $ref: '#/components/schemas/FlightDate'
+
+    GenerateVoucherRequest:
+      type: object
+      required:
+        - name
+        - id
+        - flightNumber
+        - date
+        - aircraft
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Crew member name. Leading and trailing whitespace is removed.
+          examples:
+            - Sarah
+        id:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: |
+            Crew member identifier. Send this as a string to preserve leading
+            zeroes. Leading and trailing whitespace is removed.
+          examples:
+            - '00123'
+        flightNumber:
+          $ref: '#/components/schemas/FlightNumber'
+        date:
+          $ref: '#/components/schemas/FlightDate'
+        aircraft:
+          $ref: '#/components/schemas/AircraftType'
+
+    VoucherAvailabilityData:
+      type: object
+      required:
+        - exists
+      properties:
+        exists:
+          type: boolean
+          description: Whether vouchers already exist for the flight and date.
+
+    VoucherAvailabilityResponse:
+      type: object
+      required:
+        - success
+        - message
+        - code
+        - data
+      properties:
+        success:
+          type: boolean
+          const: true
+        message:
+          type: string
+          const: Voucher availability checked successfully.
+        code:
+          type: integer
+          const: 200
+        data:
+          $ref: '#/components/schemas/VoucherAvailabilityData'
+
+    Seat:
+      type: string
+      pattern: '^(?:[1-9]|[12][0-9]|3[0-2])[A-F]$'
+      description: |
+        Aircraft seat identifier. ATR assignments use rows 1–18 and letters A,
+        C, D, or F. Airbus 320 and Boeing 737 Max assignments use rows 1–32 and
+        letters A–F.
+      examples:
+        - 3B
+
+    GeneratedVoucherData:
+      type: object
+      required:
+        - seats
+      properties:
+        seats:
+          type: array
+          description: Three unique seats selected from the chosen aircraft layout.
+          minItems: 3
+          maxItems: 3
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/Seat'
+
+    GeneratedVoucherResponse:
+      type: object
+      required:
+        - success
+        - message
+        - code
+        - data
+      properties:
+        success:
+          type: boolean
+          const: true
+        message:
+          type: string
+          const: Vouchers generated successfully.
+        code:
+          type: integer
+          const: 201
+        data:
+          $ref: '#/components/schemas/GeneratedVoucherData'
+
+    EmptyData:
+      type: array
+      maxItems: 0
+      items: {}
+      description: Empty data payload.
+
+    ConflictResponse:
+      type: object
+      required:
+        - success
+        - message
+        - code
+        - data
+      properties:
+        success:
+          type: boolean
+          const: false
+        message:
+          type: string
+          const: Vouchers have already been generated for this flight and date.
+        code:
+          type: integer
+          const: 409
+        data:
+          $ref: '#/components/schemas/EmptyData'
+
+    ValidationErrorResponse:
+      type: object
+      required:
+        - message
+        - errors
+      properties:
+        message:
+          type: string
+          description: Summary of the validation errors.
+        errors:
+          type: object
+          description: Validation messages grouped by request field.
+          additionalProperties:
+            type: array
+            minItems: 1
+            items:
+              type: string
+
+  responses:
+    ValidationError:
+      description: One or more request fields failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+          examples:
+            missingFlightNumber:
+              summary: Required flight number is missing
+              value:
+                message: The flight number is required.
+                errors:
+                  flightNumber:
+                    - The flight number is required.
+            invalidAircraft:
+              summary: Aircraft type is not supported
+              value:
+                message: The selected aircraft type is invalid.
+                errors:
+                  aircraft:
+                    - The selected aircraft type is invalid.
